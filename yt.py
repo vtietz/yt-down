@@ -4,7 +4,25 @@ import subprocess
 import os
 import re
 import argparse
+import logging
+from datetime import datetime
 from urllib.parse import urlparse, parse_qs
+
+def setup_logging():
+    log_dir = ensure_download_dir(os.path.join(os.path.dirname(__file__), 'logs'))
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = os.path.join(log_dir, f'youtube_dl_{timestamp}.log')
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+    )
+    return logging.getLogger('youtube_dl')
 
 def sanitize_filename(filename):
     # Remove invalid characters for Windows filenames
@@ -25,9 +43,10 @@ def search_youtube(query):
             if 'entries' in result and len(result['entries']) > 0:
                 video = result['entries'][0]
                 return {'id': video['id'], 'title': video['title']}
+            logger.warning("No search results found")
             return None
         except Exception as e:
-            print(f"Search error: {e}")
+            logger.error(f"Search error: {e}")
             return None
 
 def get_video_id(input_string):
@@ -60,6 +79,7 @@ def download_video_and_audio_separately(video_id, skip_quality_selection=False, 
     try:
         # Construct the YouTube URL from the video ID
         url = f'https://www.youtube.com/watch?v={video_id}'
+        logger.info(f"Starting download for video: {url}")
         
         # Fetch format list with video-only and audio-only filtering
         ydl_opts_info = {
@@ -77,14 +97,14 @@ def download_video_and_audio_separately(video_id, skip_quality_selection=False, 
         audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none']
         
         if not video_formats or not audio_formats:
-            print("No suitable video or audio formats found.")
+            logger.error("No suitable video or audio formats found.")
             return
         
         # Set default best video and audio formats
         best_video_format = video_formats[-1]['format_id']
         best_audio_format = audio_formats[0]['format_id']
-        print(f"Default video format: {video_formats[-1]['ext']} {video_formats[-1]['resolution']}")
-        print(f"Default audio format: {audio_formats[0]['ext']}")
+        logger.info(f"Default video format: {video_formats[-1]['ext']} {video_formats[-1]['resolution']}")
+        logger.info(f"Default audio format: {audio_formats[0]['ext']}")
         
         if skip_quality_selection:
             selected_video_format = best_video_format
@@ -158,17 +178,17 @@ def download_video_and_audio_separately(video_id, skip_quality_selection=False, 
         }
         
         # Download video
+        logger.info(f"Downloading video format {selected_video_format}")
         with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
-            print(f"Downloading video format {selected_video_format}")
             ydl.download([url])
         
         # Download audio
+        logger.info(f"Downloading audio format {selected_audio_format}")
         with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
-            print(f"Downloading audio format {selected_audio_format}")
             ydl.download([url])
         
         # Merge video and audio using ffmpeg
-        print("Merging video and audio using ffmpeg...")
+        logger.info("Merging video and audio using ffmpeg...")
         subprocess.run([
             'ffmpeg', '-i', video_file, '-i', audio_file,
             '-c:v', 'copy', '-c:a', 'aac', '-strict', 'experimental', output_file
@@ -178,11 +198,15 @@ def download_video_and_audio_separately(video_id, skip_quality_selection=False, 
         os.remove(video_file)
         os.remove(audio_file)
         
-        print(f"Download and merge completed! Final file: {output_file}")
+        logger.info(f"Download and merge completed! Final file: {output_file}")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logger.error(f"An error occurred: {e}")
 
 if __name__ == '__main__':
+    logger = setup_logging()
+    logger.info("YouTube Downloader started")
+    logger.info(f"Raw command line arguments: {sys.argv[1:]}")  # Skip first arg (script name)
+       
     parser = argparse.ArgumentParser(description='''
     YouTube Video Downloader - Download videos with separate video/audio streams for best quality.
     
@@ -212,8 +236,15 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
+    # Log the arguments
+    logger.info("Arguments:")
+    logger.info(f"  Input: {args.input}")
+    logger.info(f"  Skip quality selection: {args.skip_quality}")
+    logger.info(f"  Output path: {args.output}")
+    
     if not args.input:
         parser.print_help()
+        logger.warning("No input provided")
         sys.exit(1)
         
     video_id = get_video_id(args.input)
@@ -221,3 +252,4 @@ if __name__ == '__main__':
         download_video_and_audio_separately(video_id, args.skip_quality, args.output)
     else:
         parser.print_help()
+        logger.error("Could not get video ID")
