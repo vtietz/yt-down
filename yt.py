@@ -75,7 +75,21 @@ def ensure_download_dir(path):
         os.makedirs(path)
     return path
 
-def download_video_and_audio_separately(video_id, skip_quality_selection=False, output_path=None, custom_filename=None):
+def check_file_exists(filepath, force_overwrite=False):
+    """Check if file exists and handle overwrite choice"""
+    if (os.path.exists(filepath)):
+        if (force_overwrite):
+            logger.info(f"Force overwrite enabled, will overwrite: {filepath}")
+            return True
+        choice = input(f"File already exists: {filepath}\nDo you want to overwrite? [y/N]: ")
+        if (choice.lower() != 'y'):
+            logger.info("Download cancelled by user - file exists")
+            return False
+        logger.info("User chose to overwrite existing file")
+        return True
+    return True
+
+def download_video_and_audio_separately(video_id, skip_quality_selection=False, output_path=None, custom_filename=None, force_overwrite=False):
     try:
         # Construct the YouTube URL from the video ID
         url = f'https://www.youtube.com/watch?v={video_id}'
@@ -83,7 +97,6 @@ def download_video_and_audio_separately(video_id, skip_quality_selection=False, 
         
         # Fetch format list with video-only and audio-only filtering
         ydl_opts_info = {
-            'cookiefile': 'cookies.txt',
             'listformats': True,
         }
         
@@ -161,19 +174,21 @@ def download_video_and_audio_separately(video_id, skip_quality_selection=False, 
         else:
             output_file = output_path if output_path.endswith('.mp4') else f"{output_path}.mp4"
 
+        # Check if file exists before starting download
+        if not check_file_exists(output_file, force_overwrite):
+            return
+
         # Temporary files in download directory
         video_file = os.path.join(download_dir, f"{video_title}_video.mp4")
         audio_file = os.path.join(download_dir, f"{video_title}_audio.mp4")
         
         ydl_opts_video = {
             'outtmpl': video_file,
-            'cookiefile': 'cookies.txt',
             'format': selected_video_format
         }
         
         ydl_opts_audio = {
             'outtmpl': audio_file,
-            'cookiefile': 'cookies.txt',
             'format': selected_audio_format
         }
         
@@ -226,6 +241,9 @@ if __name__ == '__main__':
         Specify output file:
             python yt.py -o "my_video.mp4" "never gonna give you up"
             python yt.py --output "/path/to/video.mp4" "never gonna give you up"
+            
+        Force overwrite existing files:
+            python yt.py -f "never gonna give you up"
     ''', formatter_class=argparse.RawDescriptionHelpFormatter)
     
     parser.add_argument('input', nargs='?', help='YouTube video ID, URL, or search query')
@@ -233,6 +251,8 @@ if __name__ == '__main__':
                         help='Skip quality selection and use best quality')
     parser.add_argument('--output', '-o', 
                         help='Output file path/name (default: download/<title>.mp4)')
+    parser.add_argument('--force', '-f', action='store_true',
+                        help='Force overwrite if output file already exists')
     
     args = parser.parse_args()
     
@@ -241,6 +261,7 @@ if __name__ == '__main__':
     logger.info(f"  Input: {args.input}")
     logger.info(f"  Skip quality selection: {args.skip_quality}")
     logger.info(f"  Output path: {args.output}")
+    logger.info(f"  Force overwrite: {args.force}")
     
     if not args.input:
         parser.print_help()
@@ -249,7 +270,7 @@ if __name__ == '__main__':
         
     video_id = get_video_id(args.input)
     if video_id:
-        download_video_and_audio_separately(video_id, args.skip_quality, args.output)
+        download_video_and_audio_separately(video_id, args.skip_quality, args.output, args.force)
     else:
         parser.print_help()
         logger.error("Could not get video ID")
