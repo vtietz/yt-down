@@ -51,7 +51,12 @@ def get_video_id(input_string):
             print("No video found for the search query")
             return None
 
-def download_video_and_audio_separately(video_id, skip_quality_selection=False):
+def ensure_download_dir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+    return path
+
+def download_video_and_audio_separately(video_id, skip_quality_selection=False, output_path=None, custom_filename=None):
     try:
         # Construct the YouTube URL from the video ID
         url = f'https://www.youtube.com/watch?v={video_id}'
@@ -120,9 +125,25 @@ def download_video_and_audio_separately(video_id, skip_quality_selection=False):
                     return
         
         # Define download options for video and audio
-        video_file = f"{video_title}_video.mp4"
-        audio_file = f"{video_title}_audio.mp4"
-        output_file = f"{video_title}.mp4"
+        download_dir = ensure_download_dir(os.path.join(os.path.dirname(__file__), 'download'))
+        if output_path:
+            output_dir = os.path.dirname(output_path)
+            if output_dir:
+                ensure_download_dir(output_dir)
+        
+        if custom_filename:
+            output_file = custom_filename if custom_filename.endswith('.mp4') else f"{custom_filename}.mp4"
+        else:
+            output_file = f"{video_title}.mp4"
+            
+        if not output_path:
+            output_file = os.path.join(download_dir, output_file)
+        else:
+            output_file = output_path if output_path.endswith('.mp4') else f"{output_path}.mp4"
+
+        # Temporary files in download directory
+        video_file = os.path.join(download_dir, f"{video_title}_video.mp4")
+        audio_file = os.path.join(download_dir, f"{video_title}_audio.mp4")
         
         ydl_opts_video = {
             'outtmpl': video_file,
@@ -177,11 +198,17 @@ if __name__ == '__main__':
         
         Skip quality selection (use best quality):
             python yt.py --skip-quality "never gonna give you up"
+            
+        Specify output file:
+            python yt.py -o "my_video.mp4" "never gonna give you up"
+            python yt.py --output "/path/to/video.mp4" "never gonna give you up"
     ''', formatter_class=argparse.RawDescriptionHelpFormatter)
     
     parser.add_argument('input', nargs='?', help='YouTube video ID, URL, or search query')
     parser.add_argument('--skip-quality', '-s', action='store_true', 
                         help='Skip quality selection and use best quality')
+    parser.add_argument('--output', '-o', 
+                        help='Output file path/name (default: download/<title>.mp4)')
     
     args = parser.parse_args()
     
@@ -191,6 +218,6 @@ if __name__ == '__main__':
         
     video_id = get_video_id(args.input)
     if video_id:
-        download_video_and_audio_separately(video_id, args.skip_quality)
+        download_video_and_audio_separately(video_id, args.skip_quality, args.output)
     else:
         parser.print_help()
