@@ -114,7 +114,42 @@ def check_file_exists(filepath, force_overwrite=False):
         return True
     return True
 
-def download_video_and_audio_separately(video_info, skip_quality_selection=False, output_dir=None, suffix="", force_overwrite=False):
+def get_resolution_height(resolution):
+    """Convert resolution string to height number (e.g., '1080p' -> 1080)"""
+    if not resolution:
+        return None
+    # Handle common resolution strings
+    if 'x' in resolution:
+        try:
+            width, height = map(int, resolution.split('x'))
+            return height
+        except:
+            pass
+    match = re.match(r'(\d+)p?', resolution.lower())
+    return int(match.group(1)) if match else None
+
+def sort_formats_by_resolution(formats):
+    """Sort formats by resolution height"""
+    def get_height(fmt):
+        res = fmt.get('resolution', '')
+        height = get_resolution_height(res)
+        return height if height else 0
+    return sorted(formats, key=get_height)
+
+def sort_formats_by_quality(formats):
+    """Sort formats by resolution and then by quality (bitrate/filesize)"""
+    def get_quality_score(fmt):
+        height = get_resolution_height(fmt.get('resolution', '')) or 0
+        # Prefer higher bitrate within same resolution
+        bitrate = fmt.get('tbr', 0) or fmt.get('vbr', 0) or 0
+        # If no bitrate, use filesize as fallback
+        filesize = fmt.get('filesize', 0) or 0
+        # Return tuple for sorting: (height, bitrate, filesize)
+        return (height, bitrate, filesize)
+    
+    return sorted(formats, key=get_quality_score)
+
+def download_video_and_audio_separately(video_info, skip_quality_selection=False, output_dir=None, suffix="", force_overwrite=False, max_resolution=None):
     try:
         video_id = video_info['id']
         url = f'https://www.youtube.com/watch?v={video_id}'
@@ -137,50 +172,88 @@ def download_video_and_audio_separately(video_info, skip_quality_selection=False
         if not video_formats or not audio_formats:
             logger.error("No suitable video or audio formats found.")
             return
-        
-        # Set default best video and audio formats
+            
+        # Filter by resolution if specified
+        if max_resolution:
+            max_height = get_resolution_height(max_resolution)
+            if max_height:
+                # Sort formats by resolution and quality before filtering
+                video_formats = sort_formats_by_quality(video_formats)
+                video_formats = [f for f in video_formats if get_resolution_height(f.get('resolution', '')) and get_resolution_height(f.get('resolution', '')) <= max_height]
+                if not video_formats:
+                    raise Exception(f"No video formats found for resolution {max_resolution} or below")
+                
+                # Group formats by resolution
+                formats_by_res = {}
+                for fmt in video_formats:
+                    res = fmt.get('resolution', '')
+                    if res not in formats_by_res:
+                        formats_by_res[res] = []
+                    formats_by_res[res].append(fmt)
+                
+                # Log available formats grouped by resolution
+                logger.info("Available formats by resolution:")
+                for res, fmts in formats_by_res.items():
+                    best_fmt = sorted(fmts, key=lambda f: (f.get('tbr', 0) or f.get('vbr', 0) or f.get('filesize', 0) or 0))[-1]
+                    logger.info(f"  {res}: {len(fmts)} formats, selected format_id: {best_fmt['format_id']} "
+                              f"(bitrate: {best_fmt.get('tbr', 'N/A')}, size: {best_fmt.get('filesize', 'N/A')})")
+                
+                # Get the highest resolution available within limit
+                max_res_available = max(formats_by_res.keys(), key=lambda r: get_resolution_height(r) or 0)
+                # Get the best quality format for that resolution
+                best_formats = formats_by_res[max_res_available]
+                video_formats = [sorted(best_formats, key=lambda f: (f.get('tbr', 0) or f.get('vbr', 0) or f.get('filesize', 0) or 0))[-1]]
+                
+                logger.info(f"Selected best format at {max_res_available}")
+
+        # Set default best video and audio formats (now properly sorted)
         best_video_format = video_formats[-1]['format_id']
         best_audio_format = audio_formats[0]['format_id']
         logger.info(f"Default video format: {video_formats[-1]['ext']} {video_formats[-1]['resolution']}")
         logger.info(f"Default audio format: {audio_formats[0]['ext']}")
         
-        if skip_quality_selection:
+        # If max_resolution is set, skip manual selection regardless of other settings
+        if max_resolution:
             selected_video_format = best_video_format
             selected_audio_format = best_audio_format
         else:
-            choice = input("Press Enter to use default formats [default: best quality] or type 'manual' to select manually: ")
-            if choice == '':
+            if skip_quality_selection:
                 selected_video_format = best_video_format
                 selected_audio_format = best_audio_format
             else:
-                print("Available video-only formats:")
-                for i, fmt in enumerate(video_formats, start=1):
-                    resolution = fmt.get('resolution', 'unknown')
-                    ext = fmt.get('ext', 'unknown')
-                    filesize = fmt.get('filesize', 'unknown')
-                    print(f"{i}. {ext} {resolution} {filesize}B")
-                
-                video_choice = input(f"Enter the number of the video format you want to download [default: {len(video_formats)}]: ")
-                video_choice = int(video_choice) if video_choice else len(video_formats)
-                if 1 <= video_choice <= len(video_formats):
-                    selected_video_format = video_formats[video_choice - 1]['format_id']
+                choice = input("Press Enter to use default formats [default: best quality] or type 'manual' to select manually: ")
+                if choice == '':
+                    selected_video_format = best_video_format
+                    selected_audio_format = best_audio_format
                 else:
-                    print("Invalid choice.")
-                    return
-                
-                print("Available audio-only formats:")
-                for i, fmt in enumerate(audio_formats, start=1):
-                    ext = fmt.get('ext', 'unknown')
-                    filesize = fmt.get('filesize', 'unknown')
-                    print(f"{i}. {ext} {filesize}B")
-                
-                audio_choice = input(f"Enter the number of the audio format you want to download [default: 1]: ")
-                audio_choice = int(audio_choice) if audio_choice else 1
-                if 1 <= audio_choice <= len(audio_formats):
-                    selected_audio_format = audio_formats[audio_choice - 1]['format_id']
-                else:
-                    print("Invalid choice.")
-                    return
+                    print("Available video-only formats:")
+                    for i, fmt in enumerate(video_formats, start=1):
+                        resolution = fmt.get('resolution', 'unknown')
+                        ext = fmt.get('ext', 'unknown')
+                        filesize = fmt.get('filesize', 'unknown')
+                        print(f"{i}. {ext} {resolution} {filesize}B")
+                    
+                    video_choice = input(f"Enter the number of the video format you want to download [default: {len(video_formats)}]: ")
+                    video_choice = int(video_choice) if video_choice else len(video_formats)
+                    if 1 <= video_choice <= len(video_formats):
+                        selected_video_format = video_formats[video_choice - 1]['format_id']
+                    else:
+                        print("Invalid choice.")
+                        return
+                    
+                    print("Available audio-only formats:")
+                    for i, fmt in enumerate(audio_formats, start=1):
+                        ext = fmt.get('ext', 'unknown')
+                        filesize = fmt.get('filesize', 'unknown')
+                        print(f"{i}. {ext} {filesize}B")
+                    
+                    audio_choice = input(f"Enter the number of the audio format you want to download [default: 1]: ")
+                    audio_choice = int(audio_choice) if audio_choice else 1
+                    if 1 <= audio_choice <= len(audio_formats):
+                        selected_audio_format = audio_formats[audio_choice - 1]['format_id']
+                    else:
+                        print("Invalid choice.")
+                        return
         
         # Define download options for video and audio
         download_dir = ensure_download_dir(os.path.join(os.path.dirname(__file__), 'download'))
@@ -297,6 +370,10 @@ if __name__ == '__main__':
         Skip quality selection (use best quality):
             python yt.py -s "never gonna give you up"
             
+        Limit maximum resolution:
+            python yt.py --max-res 720p "game trailer 2024"
+            python yt.py --max-res 1080p "game trailer 2024"
+            
         Specify output directory:
             python yt.py -o "/path/to/directory" "never gonna give you up"
             
@@ -319,6 +396,8 @@ if __name__ == '__main__':
                         help='Number of search results to download (1-50, default: 1)')
     parser.add_argument('--suffix', metavar='SUFFIX', type=str, default='',
                         help='Suffix to add to filename (e.g., "--suffix=-trailer")')
+    parser.add_argument('--max-res', metavar='RES',
+                        help='Maximum resolution (e.g., 720p, 1080p). Overrides quality selection.')
     
     args = parser.parse_args()
     
@@ -330,10 +409,16 @@ if __name__ == '__main__':
     logger.info(f"  Force overwrite: {args.force}")
     logger.info(f"  Number of search results: {args.number}")
     logger.info(f"  Filename suffix: {args.suffix}")
+    logger.info(f"  Maximum resolution: {args.max_res}")
     
     # Validate number of results
     args.number = max(1, min(50, args.number))  # Limit between 1 and 50
     logger.info(f"Will download up to {args.number} videos")
+    
+    # Validate max resolution if provided
+    if args.max_res and not get_resolution_height(args.max_res):
+        logger.error(f"Invalid resolution format: {args.max_res}. Use format like 720p or 1080p")
+        sys.exit(1)
     
     if not args.input:
         parser.print_help()
@@ -354,7 +439,8 @@ if __name__ == '__main__':
                     args.skip_quality, 
                     args.output,
                     args.suffix,
-                    args.force
+                    args.force,
+                    args.max_res
                 )
                 success_count += 1
             except Exception as e:
