@@ -24,50 +24,75 @@ def setup_logging():
     )
     return logging.getLogger('youtube_dl')
 
-def sanitize_filename(filename):
-    # Remove invalid characters for Windows filenames
-    return re.sub(r'[<>:"/\\|?*]', '_', filename)
+def sanitize_filename(filename, max_length=150):
+    """Sanitize filename and limit length"""
+    # Remove invalid characters and replace with underscore
+    clean = re.sub(r'[<>:"/\\|?*]', '_', filename)
+    # Limit length while preserving file extension
+    if len(clean) > max_length:
+        clean = clean[:max_length-3] + "..."
+    return clean
 
-def search_youtube(query):
+def get_unique_filename(base_path, title, suffix=""):
+    """Generate unique filename based on title and optional suffix"""
+    base_name = sanitize_filename(title)
+    if suffix:
+        base_name = f"{base_name}{suffix}"
+    
+    file_path = os.path.join(base_path, f"{base_name}.mp4")
+    counter = 1
+    
+    while os.path.exists(file_path):
+        file_path = os.path.join(base_path, f"{base_name}_{counter}.mp4")
+        counter += 1
+    
+    return file_path
+
+def search_youtube(query, max_results=1):
     ydl_opts = {
         'format': 'best',
         'quiet': True,
         'no_warnings': True,
         'extract_flat': True,
-        'default_search': 'ytsearch1'  # Only get the first result
+        'playlist_items': f'1-{max_results}',  # Limit the number of results
+        'default_search': f'ytsearch{max_results}'  # Request more results
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
-            result = ydl.extract_info(f"ytsearch:{query}", download=False)
-            if 'entries' in result and len(result['entries']) > 0:
-                video = result['entries'][0]
-                return {'id': video['id'], 'title': video['title']}
+            result = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
+            if 'entries' in result:
+                videos = []
+                for entry in result['entries']:
+                    if entry:  # Some entries might be None
+                        videos.append({'id': entry['id'], 'title': entry['title']})
+                        if len(videos) >= max_results:  # Ensure we don't exceed requested number
+                            break
+                return videos
             logger.warning("No search results found")
             return None
         except Exception as e:
             logger.error(f"Search error: {e}")
             return None
 
-def get_video_id(input_string):
-    # Check if input is a full URL
+def get_video_id(input_string, max_results=1):
+    # Handle URL or direct video ID
     if 'youtube.com' in input_string or 'youtu.be' in input_string:
         parsed_url = urlparse(input_string)
         if 'youtube.com' in input_string:
-            return parse_qs(parsed_url.query).get('v', [None])[0]
-        else:  # youtu.be
-            return parsed_url.path[1:]
-    # Check if input is a video ID (11 characters)
-    elif len(input_string) == 11:
-        return input_string
-    # Treat as search query
-    else:
-        result = search_youtube(input_string)
-        if result:
-            print(f"Found video: {result['title']}")
-            return result['id']
+            return [{'id': parse_qs(parsed_url.query).get('v', [None])[0], 'title': None}]
         else:
-            print("No video found for the search query")
+            return [{'id': parsed_url.path[1:], 'title': None}]
+    elif len(input_string) == 11:
+        return [{'id': input_string, 'title': None}]
+    else:
+        results = search_youtube(input_string, max_results)
+        if results:
+            for video in results:
+                logger.info(f"Found video: {video['title']}")
+            return results
+        else:
+            logger.warning("No videos found for the search query")
             return None
 
 def ensure_download_dir(path):
@@ -89,9 +114,9 @@ def check_file_exists(filepath, force_overwrite=False):
         return True
     return True
 
-def download_video_and_audio_separately(video_id, skip_quality_selection=False, output_path=None, custom_filename=None, force_overwrite=False):
+def download_video_and_audio_separately(video_info, skip_quality_selection=False, output_dir=None, suffix="", force_overwrite=False):
     try:
-        # Construct the YouTube URL from the video ID
+        video_id = video_info['id']
         url = f'https://www.youtube.com/watch?v={video_id}'
         logger.info(f"Starting download for video: {url}")
         
@@ -159,36 +184,26 @@ def download_video_and_audio_separately(video_id, skip_quality_selection=False, 
         
         # Define download options for video and audio
         download_dir = ensure_download_dir(os.path.join(os.path.dirname(__file__), 'download'))
-        if output_path:
-            output_dir = os.path.dirname(output_path)
-            if output_dir:
-                ensure_download_dir(output_dir)
+        target_dir = output_dir if output_dir else download_dir
+        ensure_download_dir(target_dir)
         
-        if custom_filename:
-            output_file = custom_filename if custom_filename.endswith('.mp4') else f"{custom_filename}.mp4"
-        else:
-            output_file = f"{video_title}.mp4"
-            
-        if not output_path:
-            output_file = os.path.join(download_dir, output_file)
-        else:
-            output_file = output_path if output_path.endswith('.mp4') else f"{output_path}.mp4"
-
-        # Check if file exists before starting download
-        if not check_file_exists(output_file, force_overwrite):
-            return
-
-        # Temporary files in download directory
-        video_file = os.path.join(download_dir, f"{video_title}_video.mp4")
-        audio_file = os.path.join(download_dir, f"{video_title}_audio.mp4")
+        # Get video title if not provided
+        if not video_info['title']:
+            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                info = ydl.extract_info(url, download=False)
+                video_info['title'] = info['title']
+        
+        output_file = get_unique_filename(target_dir, video_info['title'], suffix)
+        temp_video = os.path.join(download_dir, f"{video_id}_temp_video.mp4")
+        temp_audio = os.path.join(download_dir, f"{video_id}_temp_audio.mp4")
         
         ydl_opts_video = {
-            'outtmpl': video_file,
+            'outtmpl': temp_video,
             'format': selected_video_format
         }
         
         ydl_opts_audio = {
-            'outtmpl': audio_file,
+            'outtmpl': temp_audio,
             'format': selected_audio_format
         }
         
@@ -204,18 +219,59 @@ def download_video_and_audio_separately(video_id, skip_quality_selection=False, 
         
         # Merge video and audio using ffmpeg
         logger.info("Merging video and audio using ffmpeg...")
-        subprocess.run([
-            'ffmpeg', '-i', video_file, '-i', audio_file,
+        logger.info(f"Source video: {temp_video}")
+        logger.info(f"Source audio: {temp_audio}")
+        logger.info(f"Target file: {output_file}")
+        
+        # Ensure target directory exists
+        target_dir = os.path.dirname(output_file)
+        if not os.path.exists(target_dir):
+            logger.info(f"Creating target directory: {target_dir}")
+            os.makedirs(target_dir, exist_ok=True)
+        
+        # Check if source files exist
+        if not os.path.exists(temp_video):
+            raise FileNotFoundError(f"Video file not found: {temp_video}")
+        if not os.path.exists(temp_audio):
+            raise FileNotFoundError(f"Audio file not found: {temp_audio}")
+        
+        # Run ffmpeg with output capture
+        result = subprocess.run([
+            'ffmpeg', '-i', temp_video, '-i', temp_audio,
             '-c:v', 'copy', '-c:a', 'aac', '-strict', 'experimental', output_file
-        ])
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            logger.error(f"FFmpeg error: {result.stderr}")
+            raise Exception(f"FFmpeg failed with return code {result.returncode}")
+        
+        # Verify the output file exists and has size > 0
+        if not os.path.exists(output_file):
+            raise FileNotFoundError(f"Output file was not created: {output_file}")
+        if os.path.getsize(output_file) == 0:
+            raise Exception(f"Output file was created but is empty: {output_file}")
+            
+        logger.info(f"FFmpeg merge successful. Output file size: {os.path.getsize(output_file)} bytes")
         
         # Cleanup temporary files
-        os.remove(video_file)
-        os.remove(audio_file)
+        try:
+            os.remove(temp_video)
+            os.remove(temp_audio)
+            logger.info("Temporary files cleaned up successfully")
+        except Exception as e:
+            logger.warning(f"Error cleaning up temporary files: {e}")
         
         logger.info(f"Download and merge completed! Final file: {output_file}")
     except Exception as e:
         logger.error(f"An error occurred: {e}")
+        # Try to clean up temp files even if there was an error
+        for temp_file in [temp_video, temp_audio]:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except:
+                pass
+        raise  # Re-raise the exception after cleanup
 
 if __name__ == '__main__':
     logger = setup_logging()
@@ -232,15 +288,21 @@ if __name__ == '__main__':
         Download by URL:
             python yt.py https://www.youtube.com/watch?v=dQw4w9WgXcQ
         
-        Search and download:
+        Search and download (first result):
             python yt.py "never gonna give you up"
         
+        Search and download multiple results:
+            python yt.py -n 5 "game trailer 2024"
+        
         Skip quality selection (use best quality):
-            python yt.py --skip-quality "never gonna give you up"
+            python yt.py -s "never gonna give you up"
             
-        Specify output file:
-            python yt.py -o "my_video.mp4" "never gonna give you up"
-            python yt.py --output "/path/to/video.mp4" "never gonna give you up"
+        Specify output directory:
+            python yt.py -o "/path/to/directory" "never gonna give you up"
+            
+        Add suffix to filename:
+            python yt.py --suffix="-trailer" "game trailer 2024"
+            python yt.py --suffix="-other suffix" "video name"
             
         Force overwrite existing files:
             python yt.py -f "never gonna give you up"
@@ -249,10 +311,14 @@ if __name__ == '__main__':
     parser.add_argument('input', nargs='?', help='YouTube video ID, URL, or search query')
     parser.add_argument('--skip-quality', '-s', action='store_true', 
                         help='Skip quality selection and use best quality')
-    parser.add_argument('--output', '-o', 
-                        help='Output file path/name (default: download/<title>.mp4)')
+    parser.add_argument('--output', '-o', metavar='DIR',
+                        help='Output directory (default: download/)')
     parser.add_argument('--force', '-f', action='store_true',
                         help='Force overwrite if output file already exists')
+    parser.add_argument('--number', '-n', type=int, default=1,
+                        help='Number of search results to download (1-50, default: 1)')
+    parser.add_argument('--suffix', metavar='SUFFIX', type=str, default='',
+                        help='Suffix to add to filename (e.g., "--suffix=-trailer")')
     
     args = parser.parse_args()
     
@@ -262,15 +328,49 @@ if __name__ == '__main__':
     logger.info(f"  Skip quality selection: {args.skip_quality}")
     logger.info(f"  Output path: {args.output}")
     logger.info(f"  Force overwrite: {args.force}")
+    logger.info(f"  Number of search results: {args.number}")
+    logger.info(f"  Filename suffix: {args.suffix}")
+    
+    # Validate number of results
+    args.number = max(1, min(50, args.number))  # Limit between 1 and 50
+    logger.info(f"Will download up to {args.number} videos")
     
     if not args.input:
         parser.print_help()
         logger.warning("No input provided")
         sys.exit(1)
         
-    video_id = get_video_id(args.input)
-    if video_id:
-        download_video_and_audio_separately(video_id, args.skip_quality, args.output, args.force)
+    videos = get_video_id(args.input, args.number)
+    if videos:
+        success_count = 0
+        fail_count = 0
+        logger.info(f"Found {len(videos)} videos to process")
+        
+        for i, video in enumerate(videos, 1):
+            logger.info(f"Processing video {i} of {len(videos)}: {video.get('title', video['id'])}")
+            try:
+                download_video_and_audio_separately(
+                    video, 
+                    args.skip_quality, 
+                    args.output,
+                    args.suffix,
+                    args.force
+                )
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Failed to process video: {e}")
+                fail_count += 1
+                continue  # Move to next video
+        
+        # Summary at the end
+        logger.info("Download summary:")
+        logger.info(f"  Successfully downloaded: {success_count}")
+        logger.info(f"  Failed downloads: {fail_count}")
+        logger.info(f"  Total attempted: {len(videos)}")
+        
+        if fail_count > 0:
+            sys.exit(1)  # Exit with error if any downloads failed
     else:
         parser.print_help()
         logger.error("Could not get video ID")
+        sys.exit(1)
