@@ -35,6 +35,15 @@ Basic usage:
 python yt.py <video_id|url|search_query> [options]
 ```
 
+### Options
+
+- `--skip-quality`, `-s`: Skip quality selection and use best quality
+- `--output`, `-o`: Output file path/name (default: download/<title>.mp4)
+- `--max-results`, `-m`: Maximum number of search results to download (default: 1)
+- `--suffix`, `-x`: Suffix to add to the output filename
+- `--force`, `-f`: Force overwrite existing file
+- `--max-res`: Limit maximum resolution, e.g. "720"
+
 ### Examples
 
 Download by video ID:
@@ -52,6 +61,11 @@ Search and download:
 python yt.py "never gonna give you up"
 ```
 
+Search and download multiple results:
+```sh
+python yt.py "never gonna give you up" --max-results 5
+```
+
 Skip quality selection (use best quality):
 ```sh
 python yt.py --skip-quality "never gonna give you up"
@@ -62,10 +76,20 @@ Specify output file:
 python yt.py -o "my_video.mp4" "never gonna give you up"
 ```
 
-### Options
+Add suffix to filename:
+```sh
+python yt.py --suffix "-trailer" "never gonna give you up"
+```
 
-- `--skip-quality`, `-s`: Skip quality selection and use best quality
-- `--output`, `-o`: Output file path/name (default: download/<title>.mp4)
+Force overwrite existing file:
+```sh
+python yt.py --force "never gonna give you up"
+```
+
+Limit maximum resolution:
+```sh
+python yt.py --max-res 720 "never gonna give you up"
+```
 
 ## Integration with tinyMediaManager
 
