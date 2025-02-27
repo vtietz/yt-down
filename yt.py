@@ -36,14 +36,18 @@ def sanitize_filename(filename, max_length=150):
 def get_unique_filename(base_path, title, suffix=""):
     """Generate unique filename based on title and optional suffix"""
     base_name = sanitize_filename(title)
-    if suffix:
-        base_name = f"{base_name}{suffix}"
-    
-    file_path = os.path.join(base_path, f"{base_name}.mp4")
     counter = 1
     
-    while os.path.exists(file_path):
-        file_path = os.path.join(base_path, f"{base_name}_{counter}.mp4")
+    while True:
+        # Add counter if needed, before the suffix
+        current_base = f"{base_name}-{counter}" if counter > 1 else base_name
+        # Add suffix if provided
+        if suffix:
+            current_base = f"{current_base}{suffix}"
+        
+        file_path = os.path.join(base_path, f"{current_base}.mp4")
+        if not os.path.exists(file_path):
+            break
         counter += 1
     
     return file_path
