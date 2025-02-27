@@ -75,29 +75,17 @@ To use this script with tinyMediaManager for automatic trailer downloads:
 2. Go to "Post Processing" section
 3. Add a new post-processing entry:
    - Name: "Download Trailer"
-   - Path: Path to Python executable (e.g. `C:\Users\live\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe`)
+   - Path: Path to Python executable (e.g. `C:\Users\[USERNAME]\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe`)
    - Arguments: 
    ```
-   "C:\Users\live\.coding\python-scripts\youtube-downloader\yt.py" "${movie.title} trailer german deutsch" -s -o "${movie.mainVideoFile.path}\${movie.mainVideoFile.basename}-trailer"
+   "[PATH_TO_YOUR_SCRIPT]\yt-down\yt.py" "${movie.title} trailer german deutsch" -s -o "${movie.mainVideoFile.path}\${movie.mainVideoFile.basename}-trailer"
    ```
 
 This will automatically search for and download the trailer in the best quality, saving it next to your movie file with "-trailer" suffix.
 
 ## Notes
 
-- Downloads are saved in the 
-
-download
-
- directory by default
-- Logs are stored in the 
-
-logs
-
- directory
-- Uses 
-
-cookies.txt
-
- for authenticated access if available
+- Downloads are saved in the `download` directory by default
+- Logs are stored in the `logs` directory
+- Uses `cookies.txt` for authenticated access if available
 - Temporary files are automatically cleaned up after merging
